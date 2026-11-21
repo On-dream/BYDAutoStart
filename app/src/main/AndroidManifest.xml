@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BYDAutoStart 正式模块 Manifest（T01 骨架）。
+
+  对齐 15 §3.0.1 / §3.3、01 §5.3-B：
+   - 模块名用 android:label、描述用 android:description
+   - 不写 xposedmodule / xposeddescription / xposedminversion / xposedscope 四个旧 meta-data
+   - 作用域用 META-INF/xposed/scope.list；模块配置用 META-INF/xposed/module.prop
+   - 不声明 INTERNET 权限（P1 探针机制保证 0 联网；正式模块网络权限待 T03 按 15 §7 拍板，本骨架不加）
+   - INTERNET 权限【用户 2026-11-08 19:31 拍板：加】：仅服务设置页授权流程（架构 A，
+     模块 App 进程内 HTTPS）；宿主侧执行链仍跑在官方 App 进程、继承宿主权限，
+     P1 探针「不声明 INTERNET 证明 0 联网」判据不适用正式模块
+   - 不补任何 intent-filter：API 102 下 LSPosed 管理器打开设置页 Activity 的机制
+     【不知道·P1① / P1-6 实测】，严禁凭记忆补 intent-filter（18 §11 #5 / 15 §3.3）
+   - 本骨架**不声明设置页 Activity**（UI 属 T04，P1 闸门未全绿不得开工）；
+     待设置页入口机制实测明确后再按机制补声明。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      ⚠️ 2026-11-21（miuix 0.9.5-beta02 升级）：**必须**保留 tools:overrideLibrary。
+
+      证据：miuix-blur-android-0.9.5-beta02.aar 的 AndroidManifest.xml 实读
+      <uses-sdk android:minSdkVersion="33" />，miuix-glass 的 minSdk 是 24 但**传递依赖 blur**
+      （miuix-glass pom 实读：depends on miuix-blur / miuix-material / miuix-ui）。
+      本工程 minSdk=26 < 33 ⇒ 不加 overrideLibrary 会 AAR metadata 校验失败、直接构建报错。
+      官方 guide/glass 原文：「an app below API 33 must add
+      tools:overrideLibrary="top.yukonga.miuix.kmp.blur" to its manifest and expect
+      the blur layer to be skipped」。
+
+      运行时语义：API 33+ 才有真实模糊/折射（本机 SDK 37 满足）；
+      33 以下玻璃退化为不透明 containerColor（guide/glass 的 fallback 说明），不会崩。
+    -->
+    <uses-sdk tools:overrideLibrary="top.yukonga.miuix.kmp.blur" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      包可见性声明（2026-11-10 新增）：设置页信息卡要显示**比亚迪官方 App 的版本号**，
+      需用 PackageManager.getPackageInfo("com.byd.aeri.caranywhere") 查询。
+
+      官方文档《软件包可见性过滤》实证（developer.android.google.cn/training/package-visibility，
+      2026-11-10 核对）：targetSdk ≥ 30（本工程 35）时，默认**过滤**其他已安装应用的信息，
+      `getPackageInfo()` 会抛 NameNotFoundException → 必须用 `<queries>` 显式声明。
+
+      **只声明唯一需要的那一个包**，不用 `QUERY_ALL_PACKAGES`（该权限需商店审核，
+      且会暴露全部已安装应用清单，违反最小可见性原则）。
+
+      2026-11-10 追加 alipay：设置页「支持开发」要在**未安装支付宝时弹 toast**，
+      该判断同样走 `getPackageInfo("com.eg.android.AlipayGphone")`，同一条规则适用。
+      注意 —— `<queries>` 只影响「查询」，不影响 `startActivity`：
+      即使不声明，隐式 Intent 照样能把支付宝拉起来（Android 官方包可见性文档口径）。
+
+      2026-11-10 追加 coolapk：设置页「追踪更新」策略为「装了酷安直投、没装走网页」，
+      `getPackageInfo("com.coolapk.market")` 用于判断装没装 —— 必须声明，
+      否则查询恒为「未安装」，会导致装了酷安的用户也永远走浏览器。
+    -->
+    <queries>
+        <package android:name="com.byd.aeri.caranywhere" />
+        <package android:name="com.eg.android.AlipayGphone" />
+        <package android:name="com.coolapk.market" />
+    </queries>
+
+    <!--
+      android:icon 对齐 docs/24-图标设计交接.md §4.5：
+      自适应图标（mipmap-anydpi-v26/ic_launcher.xml，三层 background/foreground/monochrome）。
+      不写 android:roundIcon —— 遮罩由系统/启动器提供，另做一套会造成两套外观不一致。
+    -->
+    <application
+        android:name=".BydApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:description="@string/app_desc">
+
+        <!--
+          设置页（T04，架构 A：模块 App 进程直接写 remote prefs + 授权流程在本页执行）。
+          声明为可启动组件；**严禁补任何 intent-filter**（API 102 下 LSPosed 管理器
+          打开设置页 Activity 的机制【不知道·P1① 实测】，不得凭记忆补，18 §11 #5）。
+          桌面入口【用户 2026-11-08 21:45 反馈补】：MAIN/LAUNCHER = 标准桌面图标机制
+          （与 LSPosed 管理器打开机制无关，P1① 已闭环不构成猜测依据）。
+        -->
+        <activity
+            android:name="com.bydhooker.autostart.ui.SettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.BYDAutoStart">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          架构 C 第三期：只收 tsmclient 的 **UI 数据**（Hook 三态 L1~L3、车钥匙卡列表）。
+          三条触发链都已就地执行，本 Provider 不再承载任何车控事件、不拉起任何进程。
+
+          为什么仍是 provider 不是 receiver（22:1x 实测）：模块被 HyperOS Greezer 冻结后，
+          广播被直接丢弃（BroadcastQueue: Greezer Denial），而 provider 调用可解冻/冷启动，
+          两种状态都能穿透 ⇒ 广播通道已删除，勿再加回。
+        -->
+        <provider
+            android:name="com.bydhooker.autostart.wake.NfcWakeProvider"
+            android:authorities="com.bydhooker.autostart.wake"
+            android:exported="true"
+            android:enabled="true" />
+    </application>
+</manifest>

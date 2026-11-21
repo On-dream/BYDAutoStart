@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BYDAutoStart 设置页主题 · 深色变体（Step 2C 问题 1 + Step 2D 问题 1）。
+
+  系统处于深色模式时由 -night 限定符自动选中本文件：
+    parent=android:Theme.Material.NoActionBar
+      （android:Theme.Material 是 Material 的**深色**变体 —— 本机 SDK
+       platforms/android-37.0/data/res/values/themes_material.xml 中
+       Theme.Material 的 colorBackground=@color/background_material_dark、
+       Theme.Material.Light 为 background_material_light；api-versions.xml 实证
+       Theme_Material_NoActionBar since="21"，早于 minSdk 26，可用）。
+    两者都显式设 windowNoTitle=true / windowActionBar=false
+      → 原生 ActionBar 必定不再出现（不依赖系统默认主题的 windowNoTitle 布尔资源）。
+
+  状态栏 / 导航栏图标明暗（Step 2D 问题 1）：深色模式下页面底是深色（#000000），
+  图标须为**浅色**才可见 → 显式声明 false（平台默认即 false，显式写是为了
+  与浅色版形成对照、且不依赖 Theme.Material 是否自带该属性）。
+  windowLightStatusBar 自 API 23、windowLightNavigationBar 自 API 27
+  （SDK api-versions.xml 实证），minSdk 26 上后者被平台忽略（无害）；
+  Compose 运行时另有兜底（SettingsActivity 的 SystemBarIconAppearance），
+  两处共用 isDarkMode()（= isSystemInDarkTheme()）→ 与页面配色、miuix 主题同源。
+-->
+<resources>
+    <style name="Theme.BYDAutoStart" parent="android:Theme.Material.NoActionBar">
+        <!-- 深色模式：状态栏/导航栏背景 = 我们的深色页面底（#000000）→ 图标须为浅色 -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+# Gradle wrapper 脚本必须 LF，否则 macOS/Linux 上 shebang 失效
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# 二进制资源不做换行转换
+*.so binary
+*.jar binary
+*.png binary
+*.apk binary

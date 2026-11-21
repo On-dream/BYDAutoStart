@@ -1,0 +1,36 @@
+NOTICE
+======
+
+BYDAutoStart（本项目）原创代码以 GNU GPL v3 授权，全文见 LICENSE。
+
+但仓库内下列文件**不是本项目原创**，版权归各自权利人，不受 GPL v3 覆盖：
+
+1. app/src/main/jniLibs/arm64-v8a/libwbsk_crypto_tool.so
+   白盒 AES 加解密 JNI 库，提取自第三方车控应用（包名 com.qinl.car.pub）的 APK。
+   本项目仅为与既有云端协议互通而原样引用，未作修改、未反编译重打包。
+
+2. app/src/main/assets/byd_wb_keys.json
+   app/src/main/assets/byd_predata_tables.json
+   白盒密钥与预置字节表，同样提取自上述第三方车控应用。
+   对应的常量副本见 app/src/main/kotlin/com/bydhooker/autostart/crypto/（WbKeys.kt / WbTables.kt / WrapDevice.kt）。
+
+3. app/src/main/assets/p1_samples.tsv、p1_selfcheck.tsv
+   自检用固定样本（密文 + 期望摘要），用于校验上述白盒实现是否 13/13 逐字节一致。
+
+4. app/src/main/assets/donate/alipay_qr.png
+   作者本人的收款码，不属于代码内容，可自行删除，不影响构建与运行。
+
+此外，本项目依赖以下第三方开源组件，各自遵循其原始许可证：
+- AndroidX / Jetpack Compose（Apache-2.0）
+- Miuix 0.9.5-beta02（Apache-2.0）
+- libxposed API / service 102.0.0（Apache-2.0）
+- ZXing core（Apache-2.0）
+- Kotlin / kotlinx.serialization（Apache-2.0）
+
+商标与关联声明
+--------------
+本项目为非官方项目，与比亚迪股份有限公司、小米科技有限责任公司及其关联公司无任何关联，
+未获其授权或认可。"比亚迪"、"BYD"、"小米"、"Xiaomi"、"HyperOS" 等名称仅用于说明兼容对象，
+相关商标归各自权利人所有。
+
+若权利人认为上述第三方材料的引用不当，请通过仓库 Issue 联系，作者将立即移除。

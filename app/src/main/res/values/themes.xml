@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BYDAutoStart 设置页主题（Step 2C 问题 1：去掉原生 ActionBar 标题；
+                   Step 2D 问题 1：状态栏 / 导航栏图标明暗显式声明）。
+
+  ── 根因（Step 2C）──
+  AndroidManifest 的 <activity> 只声明了 android:label（= BYDAutoStart）、
+  没有声明任何 android:theme；Activity 继承 ComponentActivity 且未使用 AppCompat，
+  系统按默认主题渲染出原生 ActionBar，显示 Activity 的 label → 页面最上方多出一条
+  黑底「BYDAutoStart」标题，与我们 Compose 的 TopAppBar 上下叠了两条标题。
+
+  ── 深浅跟随 ──
+  用 values/ + values-night/ 两份：night 限定符由系统按当前深浅色自动选择
+  （-night 限定符自 API 8 起支持，本工程 minSdk 26 满足），因此主题跟随系统深浅色，
+  且**不依赖** API 29 才有的 Theme.DeviceDefault.DayNight（minSdk 26 用不了）。
+
+  ── 状态栏图标明暗（Step 2D 问题 1）──
+  miuix 不参与 system bar（其 MiuixThemeKt 字节码中 statusBar/SystemBar/appearance/
+  InsetsController 零命中）→ 图标明暗完全由 Android 主题决定。而
+  android:Theme.Material.Light **本身不带 windowLightStatusBar**（该属性只存在于变体
+  Theme.Material.Light.LightStatusBar，见本机 SDK
+  platforms/android-37.0/data/res/values/themes_material.xml:815-817）；
+  Theme.Material（深色）与 Theme.Material.Light.NoActionBar 同样不带。
+  又因 targetSdk 35 起强制 edge-to-edge，statusBarColor 被忽略 → 状态栏区域由我们的
+  浅色页面背景填充，而图标仍按「深色背景」假设保持白色 → 浅色模式下白图标看不见。
+  故在此显式声明图标明暗，不依赖任何变体：
+    - 浅色（values/）：状态栏/导航栏底是浅色页面背景 → 图标用深色（true）；
+    - 深色（values-night/）：底是深色页面背景 → 图标用浅色（false）。
+  windowLightStatusBar 自 API 23、windowLightNavigationBar 自 API 27
+  （SDK api-versions.xml 实证），本工程 minSdk 26：API 26 上后者被平台忽略（无害），
+  且另有 Compose 运行时兜底（SettingsActivity 的 SystemBarIconAppearance），
+  两处共用 isDarkMode()（= isSystemInDarkTheme()）→ 与页面配色、miuix 主题同源。
+  注意：不设置 android:statusBarColor（targetSdk 35 已忽略）。
+
+  注意：android:label 保留（桌面图标名称与模块标识仍需要它）。
+-->
+<resources>
+    <style name="Theme.BYDAutoStart" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- 浅色模式：状态栏/导航栏背景 = 我们的浅色页面底（#F7F7F7）→ 图标须为深色才可见 -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

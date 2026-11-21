@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 仅供 Manifest 的 android:label / android:description 取用；不含旧 xposed* meta-data。
+     逐字文案以 18-UI设计定稿.md 为唯一权威（UI 属 T04，本骨架不写界面文案）。 -->
+<resources>
+    <string name="app_name">BYDAutoStart</string>
+    <string name="app_desc">Hook比亚迪app实现解锁开门自动上电</string>
+</resources>

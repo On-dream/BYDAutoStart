@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（API 26+）。三层结构，文件名与层级对齐 docs/24-图标设计交接.md §4.5。
+  背景：纯 Ink #20252E（等价深色模式底），见 values/ic_launcher_colors.xml
+  前景：绿色电源符号 + 白色钥匙（drawable/ic_launcher_foreground.xml）
+  单色：同一剪影，供 Android 13+ 主题图标取色染色（drawable/ic_launcher_monochrome.xml）
+  不提供 android:roundIcon —— 遮罩由系统/启动器给，另做一套会造成两套外观不一致。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>

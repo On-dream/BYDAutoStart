@@ -1,0 +1,27 @@
+# ---- 构建产物 / IDE ----
+build/
+.gradle/
+.kotlin/
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+
+# ---- 签名与密钥（绝不入库）----
+*.keystore
+*.jks
+*.p12
+
+# ---- 本机授权产生的真实车辆凭据（VIN / 蓝牙密码 / token）----
+# 模块运行时不需要它；该文件由「扫码授权」在本机生成后落在应用私有目录，
+# 千万不要把任何人车上的真实凭据提交到公开仓库。
+app/src/main/assets/byd_keymaterial.json
+
+# ---- 运行日志 / 截图 / 抓包 ----
+*.log
+logs/
+
+# ---- OS 杂项 ----
+.DS_Store
+Thumbs.db

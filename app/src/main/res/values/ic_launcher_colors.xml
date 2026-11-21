@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面图标背景色：UI 唯一主色 Ink（18 §3）。纯色，无渐变。 -->
+<resources>
+    <color name="ic_launcher_background">#20252E</color>
+</resources>
