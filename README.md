@@ -29,6 +29,29 @@
 - 小米智能卡 `com.miui.tsmclient`（NFC 触发需要）
 - ABI：arm64-v8a
 
+## Need help
+
+我手上只有小米手机，所以这个模块**只适配并在小米设备上验证过**，
+其他品牌（一加、OPPO、vivo、原生 Android 等）没有测试条件，也不敢保证能跑。
+
+需要说明的是，下面三块都贴着小米系统的实现走，换品牌基本要重做：
+
+| 功能 | 依赖的系统钩子 |
+|---|---|
+| 三击电源键 | HyperOS 的多击计数（`getMiuiMaxMultiPressCount` / `triggerTripleClick`） |
+| NFC 刷卡 | 小米智能卡 `com.miui.tsmclient` 的刷卡事件与 `CardInfoManager` |
+| 状态提示 | 小米超级岛 |
+
+**欢迎有能力的开发者把它适配到别的机型**。提 PR 就行（`main` 受保护，需要走 Pull Request）。
+提交时请附上这些信息，能省很多来回：
+
+- 机型、系统版本、Android API level、LSPosed 版本
+- 目标 Hook 点的类名/方法名（反编译结果或实测日志）
+- 失败时的 logcat / 模块日志片段
+
+同样欢迎提供**其他车型**的云端字段口径（`powerGear`、`leftFrontDoor`、`doorLock` 的取值含义），
+车型适配往往只是判据不同，逻辑不用重写。
+
 ## 构建
 
 需要 JDK 21 或更高（`miuix-nav` 的 class 目标字节码是 21），Android SDK 含 **API 37.2** 平台。
