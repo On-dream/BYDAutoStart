@@ -45,8 +45,11 @@ android {
         // 之后统一按「每次发布 +1」递增（实测：3.1.6 → 266、3.1.7 → 267），
         // 故 3.2.0 → **268**。
         // 3.2.0（2026-11-21）：miuix 0.9.5-beta02 + 全局玻璃 UI（详见 CHANGELOG）。
-        versionCode = 268
-        versionName = "3.2.0"
+        // 3.2.1（2026-11-21）：底栏指示器滑动跟手 + 「了解本APP」对齐官方 About 页。
+        // 3.2.2（2026-11-21）：指示器同步改用官方 MainPagerState 机制（3.2.1 那版无效）。
+        // 3.2.3（2026-11-21）：修底部弹窗被悬浮底栏遮挡（绘制层级）。
+        versionCode = 271
+        versionName = "3.2.3"
     }
 
     // API 102 入口声明文件放在 src/main/resources/META-INF/xposed/，
@@ -126,6 +129,8 @@ dependencies {
     // 不自绘玻璃（用户原话「不要自行搭，全部用 miuix 的」）。
     // 传递引入 miuix-blur（minSdk 33）+ miuix-material + miuix-ui。
     implementation(libs.miuix.glass.android)
+    // 玻璃风格图标集（官方 example 的玻璃返回箭头 MiuixIcons.Glass.ChevronBackward）。
+    implementation(libs.miuix.glass.icons.android)
     // 「了解本APP」二级页改用 miuix-nav 真页面栈（用户 2026-11-21 拍板）。
     implementation(libs.miuix.nav.android)
     // 路由栈序列化（@Serializable 注解编译期可见；版本随 miuix-nav 的 pom 实读值 1.13.0）。

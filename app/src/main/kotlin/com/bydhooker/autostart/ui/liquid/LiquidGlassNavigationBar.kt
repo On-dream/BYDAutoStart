@@ -208,6 +208,22 @@ internal fun IosLiquidGlassNavigationBar(
     isBlurActive: Boolean,
     modifier: Modifier = Modifier,
     badge: (Int) -> (@Composable () -> Unit)? = { null },
+    /**
+     * 【2026-11-21 新增，本项目适配】外部驱动的指示器位置（**tab 索引的小数形式**，
+     * 例如 1.35 = 第 1 与第 2 格之间 35% 处）。
+     *
+     * 官方组件的指示器只由内部 `DampedDragAnimation` 驱动 —— 那是**在底栏上拖拽**
+     * 的手势。本项目的 Pager 是**左右滑动页面**切换，官方组件感知不到，
+     * 于是滑动时指示器完全不动，要等滑动结束才跳过去（用户反馈「不跟手」）。
+     *
+     * 传了这个 lambda（非 null 时）就由外部接管指示器位置：内部用 `snapTo`
+     * 把 `dampedDrag` 直接钉到该位置（**不是 animateTo**，否则会和外部位置打架）。
+     * 返回 null 表示「外部不接管」，指示器回到官方原有的内部动画行为。
+     *
+     * 用 lambda 而不是直接传 Float，是为了**只在底栏这个 composable 里**读
+     * Pager 的滚动状态 —— 否则每帧的偏移都会重组整棵页面树。
+     */
+    externalIndicatorPosition: (() -> Float?)? = null,
 ) {
     val isDark = isDarkMode()
     val pillShape = remember { CircleShape }
@@ -299,6 +315,22 @@ internal fun IosLiquidGlassNavigationBar(
         if (currentIndex != selectedIndex) {
             currentIndex = selectedIndex
             dampedDrag.animateToValue(selectedIndex.toFloat())
+        }
+    }
+
+    // 【2026-11-21】外部接管指示器位置（Pager 左右滑动跟手）。
+    // provider 用 rememberUpdatedState 包一层：调用方每次重组都会传新的 lambda 实例，
+    // 直接进 derivedStateOf 会导致每帧重建。
+    val externalProvider = rememberUpdatedState(externalIndicatorPosition)
+    val externalPos by remember {
+        derivedStateOf { externalProvider.value?.invoke() }
+    }
+    LaunchedEffect(externalPos) {
+        val pos = externalPos
+        if (pos != null) {
+            // snapTo 而非 animateTo：外部位置是「当前手指位置」，必须瞬时跟上，
+            // 用动画会滞后一帧甚至互相拉扯。
+            dampedDrag.snapTo(pos)
         }
     }
 

@@ -100,6 +100,10 @@ miuix-icons-android = { group = "top.yukonga.miuix.kmp", name = "miuix-icons-and
 #   ⚠️ miuix-blur 的 AndroidManifest 声明 minSdkVersion=33，本工程 minSdk=26
 #   ⇒ 必须在 app/AndroidManifest.xml 加 tools:overrideLibrary（已加，见该文件注释）。
 miuix-glass-android = { group = "top.yukonga.miuix.kmp", name = "miuix-glass-android", version.ref = "miuix" }
+# 玻璃风格图标集（`MiuixIcons.Glass.*`）：官方 example 的玻璃返回箭头用的就是
+# `MiuixIcons.Glass.ChevronBackward`，它在官方仓库里是独立模块 miuix-glass-icons
+# （0.9.5-beta02 已发布，Maven 实查确认）。
+miuix-glass-icons-android = { group = "top.yukonga.miuix.kmp", name = "miuix-glass-icons-android", version.ref = "miuix" }
 # miuix-nav：真二级页导航（rememberNavBackStack / NavDisplay / NavTransitions）。
 #   独立模块，不依赖 miuix-ui（官方 skill source-verification.md 口径）。
 miuix-nav-android = { group = "top.yukonga.miuix.kmp", name = "miuix-nav-android", version.ref = "miuix" }

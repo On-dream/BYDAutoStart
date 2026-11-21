@@ -132,6 +132,20 @@ internal class DampedDragAnimation(
         }
     }
 
+    /**
+     * 【2026-11-21 新增】**直接钉住**当前值，不走动画。
+     *
+     * 官方原类只有 `updateValue`（带 spring 动画）与 `animateToValue`（会先 press 再放），
+     * 两者都不适合「外部连续驱动位置」的场景 —— 动画会与外部值打架、产生滞后。
+     * 外部接管时（例如 Pager 左右滑动要跟手）必须用这个**瞬时**赋值。
+     */
+    fun snapTo(value: Float) {
+        val targetValue = value.coerceIn(valueRange)
+        animationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            valueAnimation.snapTo(targetValue)
+        }
+    }
+
     fun animateToValue(value: Float) {
         animationScope.launch {
             mutatorMutex.mutate {

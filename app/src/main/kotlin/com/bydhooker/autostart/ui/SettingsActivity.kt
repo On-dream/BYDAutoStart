@@ -319,9 +319,18 @@ class SettingsActivity : ComponentActivity() {
         //  · 点击底栏 → 立即写入目标索引（球一次到位，不被中间页打断）；
         //  · 手势滑动 / 动画结束 → 跟随 currentPage 校正。
         var barIndex by remember { mutableIntStateOf(pagerState.currentPage) }
-        LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
-            // 只在「不在滚动中」时才采纳 currentPage，避免动画途中的中间页覆盖点击目标。
-            if (!pagerState.isScrollInProgress) barIndex = pagerState.currentPage
+        // 官方 `MainPagerState`（example AppContent.kt:1100）同款机制：
+        //  · 点击切页时**立即**把目标写进索引，并置 isNavigating 锁住，
+        //    这样 spring 动画途经的中间页不会把球拽走（这才是官方「不抽搐」的关键）；
+        //  · 手指滑动切页时没有导航在跑，currentPage 一变就同步 —— 球跟着动。
+        // 【2026-11-21 修正】原先写成「isScrollInProgress 为 true 就不更新」，
+        // 导致球在整个滑动过程中纹丝不动，要等滑完才跳 —— 用户反馈「不跟手」。
+        var isNavigating by remember { mutableStateOf(false) }
+        LaunchedEffect(pagerState.currentPage) {
+            if (!isNavigating) barIndex = pagerState.currentPage
+        }
+        LaunchedEffect(pagerState.isScrollInProgress) {
+            if (!pagerState.isScrollInProgress) isNavigating = false
         }
         // Step 1 骨架：0.9.4 原生折叠大标题滚动行为（skill usage-patterns.md:72）。
         val scrollBehavior = MiuixScrollBehavior()
@@ -471,29 +480,28 @@ class SettingsActivity : ComponentActivity() {
                 // 弹窗必须在 Scaffold **内部**：MiuixPopupHost 由 Scaffold 提供，
                 // 放到 Scaffold 之外会「点开不画」（glassdialog.md 硬性要求）。
                 // 2026-11-09 的修复保留：这些弹窗此前「只定义未挂载」，点按钮毫无反应。
-                ClearCredentialDialog()
-                ClearLogDialog()
-                // Step 2G：授权弹窗（未授权 → 二维码流程；已授权 → 清除凭据 / 重新授权）。
-                AuthDialog()
-                // 2026-11-10：设置页「支持开发」收款码弹窗。
-                DonateDialog()
-                // 2026-11-21：NFC 触发卡已改为设置页内的**原生玻璃下拉**
-                // （`GlassDropdownPreference`，见 NfcCardPicker.kt），
-                // 原先「点开弹一个自绘单选弹窗」的 `NfcCardPickerDialog` 已删除。
-            }
-        }
-
-        // 底栏：与 Scaffold 同级（官方结构），避免被 content 槽裁剪。
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
-        ) {
-            IosLiquidGlassNavigationBar(
+                // 悬浮玻璃底栏（iOS-LIKE 胶囊）。
+                //
+                // 【2026-11-21 层级修正】底栏必须排在**弹窗之前**绘制：
+                // 弹窗由 Scaffold 的 `MiuixPopupHost` 渲染（在 content 内），
+                // Compose 里后绘制的兄弟节点在上层 —— 底栏若排在弹窗之后（或放到
+                // Scaffold 外面），就会被弹窗盖住 / 反过来盖住弹窗
+                // （用户真机截图：底部弹出的「已授权」对话框被底栏胶囊压住）。
+                //
+                // 位置：与录制区同级（不放进录制 Box）—— 底栏自身也是玻璃面，
+                // 放进录制区就是「玻璃采样到自己」，官方 guide/glass.md 明确禁止。
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth(),
+                ) {
+                    IosLiquidGlassNavigationBar(
                     items = navItems,
-                    // 自维护索引：点击即锁定目标，滑动时跟随，避免跨页抽搐（见 MainEntry 顶部注释）。
+                    // 官方同款索引机制：点击即锁定目标 + 导航期间不被中间页覆盖。
                     selectedIndex = barIndex,
                     onItemClick = { index ->
+                        // 官方 animateToPage 同款：先立即锁定目标 + 置导航标志，再驱动 Pager。
+                        isNavigating = true
                         barIndex = index
                         pageScope.launch { pagerState.springAnimateToPage(index) }
                     },
@@ -507,7 +515,19 @@ class SettingsActivity : ComponentActivity() {
             // 组件内部自己处理左右 24dp 与底部 insets/悬浮边距；
             // 官方示例不传 modifier（modifier 默认 Modifier），这里对齐用外层 Box 承担。
         )
+                }
+                ClearCredentialDialog()
+                ClearLogDialog()
+                // Step 2G：授权弹窗（未授权 → 二维码流程；已授权 → 清除凭据 / 重新授权）。
+                AuthDialog()
+                // 2026-11-10：设置页「支持开发」收款码弹窗。
+                DonateDialog()
+                // 2026-11-21：NFC 触发卡已改为设置页内的**原生玻璃下拉**
+                // （`GlassDropdownPreference`，见 NfcCardPicker.kt），
+                // 原先「点开弹一个自绘单选弹窗」的 `NfcCardPickerDialog` 已删除。
+            }
         }
+
         }
     }
 
