@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import com.bydhooker.autostart.data.XposedServiceGate
 import com.bydhooker.autostart.ui.auth.AuthController
 import top.yukonga.miuix.kmp.basic.Card
@@ -90,11 +91,16 @@ private fun ParamsCard() {
         SliderRow(
             label = "等待窗口",
             valueSec = SettingsState.windowSeconds,
-            range = 10..180,
+            // 2026-11-22 用户要求：上限 180 s → **120 s**。
+            range = 10..120,
             // 2026-11-11：补「刷卡」—— NFC-M1 与 APP-M1 共用同一个窗口实例，
             // 刷卡触发也会顺延同一个截止时间（`docs/28` §1.3.1 ②），旧文案只说「解锁」会失真。
             gray = "开门上电模式下，触发后检测开门信号的时长；再次解锁或刷卡只顺延截止时间",
             enabled = editable,
+            // 2026-11-22 用户要求：步长 10 秒 + 带点样式；上限已降到 120 s
+            // ⇒ 10..120 / 10 = 12 档，13 个点（含两端），间距比 180 s 时更宽松。
+            step = 10,
+            showKeyPoints = true,
             onChange = { SettingsState.windowSeconds = it },
             onCommit = { XposedServiceGate.writeWindowSeconds(it) },
             readLatest = { SettingsState.windowSeconds },
@@ -105,8 +111,9 @@ private fun ParamsCard() {
             valueSec = SettingsState.pollIntervalSec,
             // 2026-11-10 用户拍板：上限 10 s → **3 s**。
             // 理由（用户原话仅「滑块最长只能是 3s」，此处补充工程含义）：
-            // 窗口最长 180 s，间隔 3 s 时最坏 60 次请求（原 10 s 为 18 次），
-            // 但比 1 s（180 次）仍低得多 → 在「发现更快」与「限流风险」之间取中间值。
+            // 窗口最长 120 s（2026-11-22 由 180 s 下调），间隔 3 s 时最坏 40 次请求
+            // （原 10 s 为 12 次），但比 1 s（120 次）仍低得多 → 在「发现更快」与
+            // 「限流风险」之间取中间值。
             // watch 通道的限流阈值项目内**【不知道】**（`01` §14 待确认），
             // 故本值取用户拍板的保守侧，不擅自放宽。
             range = 1..3,
@@ -131,6 +138,10 @@ private fun ParamsCard() {
             range = 10..60,
             gray = "车况数据超过此秒数视为陈旧，本帧不参与判定",
             enabled = editable,
+            // 2026-11-22 用户要求：步长 10 秒（10..60 ⇒ 6 档）+ 带点样式。
+            // 6 个点位（10/20/30/40/50/60）间距宽松，不会挤成一排。
+            step = 10,
+            showKeyPoints = true,
             onChange = { SettingsState.dataAgeLimitSec = it },
             onCommit = { XposedServiceGate.writeDataAgeLimitSec(it) },
             readLatest = { SettingsState.dataAgeLimitSec },
@@ -166,16 +177,28 @@ private fun SliderRow(
     onCommit: (Int) -> Unit,
     readLatest: () -> Int,
     showKeyPoints: Boolean = false,
+    /**
+     * 调整步长（秒）。2026-11-22 用户要求「等待窗口」与「数据龄上限」改为 **10 秒一档**。
+     *
+     * 注意两件事：
+     *  ① `steps` 是 Compose Slider 的「**中间**可取值个数」（不含两端），
+     *     所以 `steps = 区间长度 / step - 1`：10..180 / 10 ⇒ 16；10..60 / 10 ⇒ 4；1..3 / 1 ⇒ 1。
+     *  ② 历史值可能是旧步长（1s）下的任意整数（例如 47），落在 10s 网格之外。
+     *     Slider 的 value 若不在网格上会出现「滑块位置与显示值不一致」，
+     *     故统一用 [snapToStep] 吸附到最近档位（显示、回调、提交三处都用吸附后的值）。
+     */
+    step: Int = 1,
 ) {
+    val shown = snapToStep(valueSec, range, step)
     SliderPreference(
-        value = valueSec.toFloat(),
-        onValueChange = { onChange(it.toInt().coerceIn(range.first, range.last)) },
+        value = shown.toFloat(),
+        onValueChange = { onChange(snapToStep(it.toInt(), range, step)) },
         title = label,
         summary = gray,
-        valueText = "$valueSec 秒",
+        valueText = "$shown 秒",
         valueRange = range.first.toFloat()..range.last.toFloat(),
-        steps = (range.last - range.first) - 1,
-        onValueChangeFinished = { onCommit(readLatest()) },
+        steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
+        onValueChangeFinished = { onCommit(snapToStep(readLatest(), range, step)) },
         enabled = enabled,
         hapticEffect = SliderDefaults.SliderHapticEffect.Step,
         // 2026-11-21：点位显示（官方 `showKeyPoints`）。点位来自 steps 自动换算，
@@ -183,6 +206,17 @@ private fun SliderRow(
         showKeyPoints = showKeyPoints,
     )
 
+}
+
+/**
+ * 把秒值吸附到最近的 step 档位（四舍五入），并夹在区间内。
+ * 例：`snapToStep(47, 10..60, 10) = 50`、`snapToStep(12, 10..180, 10) = 10`。
+ */
+private fun snapToStep(value: Int, range: IntRange, step: Int): Int {
+    if (step <= 1) return value.coerceIn(range.first, range.last)
+    val clamped = value.coerceIn(range.first, range.last)
+    val index = ((clamped - range.first).toFloat() / step).roundToInt()
+    return (range.first + index * step).coerceIn(range.first, range.last)
 }
 
 /**

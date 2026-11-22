@@ -48,8 +48,11 @@ android {
         // 3.2.1（2026-11-21）：底栏指示器滑动跟手 + 「了解本APP」对齐官方 About 页。
         // 3.2.2（2026-11-21）：指示器同步改用官方 MainPagerState 机制（3.2.1 那版无效）。
         // 3.2.3（2026-11-21）：修底部弹窗被悬浮底栏遮挡（绘制层级）。
-        versionCode = 271
-        versionName = "3.2.3"
+        // 3.2.4（2026-11-22）：等待窗口/数据龄上限步长改 10s + 数据龄滑块带点。
+        // 3.2.5（2026-11-22）：等待窗口滑块也带点。
+        // 3.2.6（2026-11-22）：等待窗口上限 180s → 120s。
+        versionCode = 274
+        versionName = "3.2.6"
     }
 
     // API 102 入口声明文件放在 src/main/resources/META-INF/xposed/，
@@ -60,6 +63,20 @@ android {
             jniLibs.srcDirs("src/main/jniLibs")
         }
     }
+
+    // 隐私闸门（2026-11-21）：`byd_keymaterial.json` 含真实 VIN + 蓝牙密码，
+    // 业务代码从不读取（grep 全仓零命中）。已从 assets 删除并用 .gitignore 排除。
+    // 这里加构建前检查：若该文件被误放回，直接 fail，绝不让它进任何 APK。
+    val secretAsset = file("src/main/assets/byd_keymaterial.json")
+    tasks.register("checkNoSecretAsset") {
+        doLast {
+            if (secretAsset.exists()) {
+                throw GradleException("隐私闸门：检测到 $secretAsset，禁止打包真实 VIN/密码")
+            }
+        }
+    }
+    tasks.matching { it.name.startsWith("merge") && it.name.contains("Assets") }
+        .configureEach { dependsOn("checkNoSecretAsset") }
 
     buildFeatures {
         // T04：miuix/Compose UI（AGP 侧开关；编译器由 kotlinCompose 插件负责）
