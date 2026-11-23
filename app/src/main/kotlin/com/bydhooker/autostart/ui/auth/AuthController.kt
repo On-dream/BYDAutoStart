@@ -34,7 +34,7 @@ interface AuthExecutor {
 /** T04 默认实现：未接入网络层 → 降级文案（`18` §5.3 桥不可用行，逐字）。 */
 object T05PendingAuthExecutor : AuthExecutor {
     override fun createQr(): AuthGatewayResult =
-        AuthGatewayResult.Failure("请先打开一次比亚迪官方 App 以激活模块")
+        AuthGatewayResult.Failure("请在LSPosed框架激活模块、勾选作用域，并前往root管理器授予模块root权限")
 }
 
 /**
@@ -60,7 +60,7 @@ class AuthController {
         SettingsState.auth = AuthUi.CREATING
         io.execute {
             when (val r = runCatching { executor().createQr() }.getOrElse {
-                AuthGatewayResult.Failure("请先打开一次比亚迪官方 App 以激活模块")
+                AuthGatewayResult.Failure("请在LSPosed框架激活模块、勾选作用域，并前往root管理器授予模块root权限")
             }) {
                 is AuthGatewayResult.Qr -> {
                     SettingsState.qrPayload = r.payload

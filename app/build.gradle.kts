@@ -51,8 +51,21 @@ android {
         // 3.2.4（2026-11-22）：等待窗口/数据龄上限步长改 10s + 数据龄滑块带点。
         // 3.2.5（2026-11-22）：等待窗口滑块也带点。
         // 3.2.6（2026-11-22）：等待窗口上限 180s → 120s。
-        versionCode = 274
-        versionName = "3.2.6"
+        // 3.2.7（2026-11-23）：修「首页有 NFC 卡、设置页无触发卡」（UI 不刷新）。
+        // 3.2.8（2026-11-23）：注入时自动采集卡列表（修「重启也不恢复」）。
+        // 3.2.9（2026-11-23）：未激活时禁用关键开关 + 激活引导文案改写。
+        // 3.3.0（2026-11-23）：release 体积优化 −8.3%（二维码二值化 / 锁 arm64 / 只留 zh+en 资源）。
+        versionCode = 278
+        versionName = "3.3.0"
+
+        // 体积（2026-11-23）：只保留 arm64-v8a。
+        // 依据：模块唯一的原生库 libwbsk_crypto_tool.so 只有 arm64-v8a 一份，
+        // 其余 ABI 里只有 androidx.graphics.path 的 so，合计 25,640 B 纯冗余
+        // （实测 4 个 ABI 共 35,592 B，砍掉 3 个后剩 9,952 B）。
+        // 撤销：删除本 ndk 块即可，无其他代码依赖 ABI 列表。
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     // API 102 入口声明文件放在 src/main/resources/META-INF/xposed/，
@@ -77,6 +90,15 @@ android {
     }
     tasks.matching { it.name.startsWith("merge") && it.name.contains("Assets") }
         .configureEach { dependsOn("checkNoSecretAsset") }
+
+    // 体积（2026-11-23）：只打包中文/英文资源。
+    // 依据：miuix + androidx 自带 80+ 语言，release 的 resources.arsc 里每种语言
+    // 都复制了一份 type/id 的 typeSpec（实测 88 份 × 372 B ≈ 33 KB 纯冗余）。
+    // 本 App 只有中文界面，系统语言非 zh 时回落到 en 即可。
+    // 撤销/扩展：改这个列表，加语言只需追加代码，无代码改动。
+    androidResources {
+        localeFilters += listOf("zh", "en")
+    }
 
     buildFeatures {
         // T04：miuix/Compose UI（AGP 侧开关；编译器由 kotlinCompose 插件负责）

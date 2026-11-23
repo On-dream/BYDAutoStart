@@ -6,9 +6,12 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Process;
 
 import com.bydhooker.autostart.core.EventLog;
+import com.bydhooker.autostart.ui.SettingsState;
 
 import org.json.JSONArray;
 
@@ -33,6 +36,19 @@ import org.json.JSONArray;
 public class NfcWakeProvider extends ContentProvider {
 
     private static volatile Context sCtx;
+
+    /**
+     * 【2026-11-23 修复「首页有 NFC 卡、设置页却没有触发卡」】
+     *
+     * `call()` 跑在 Binder 线程，而 `SettingsState` 是 Compose 状态，只能在主线程改。
+     * 早期版本的注释写着「Provider 写完 HOOK_STATE / CARDS 后（同进程内，直接刷）」，
+     * 但**实际没有实现** —— 数据只落了 SP，UI 要等下一次 Activity `onResume` 才重读。
+     * 而主界面三个 Tab 是 Pager 内部切页，**不触发 onResume** ⇒
+     * tsmclient 在这期间上报的卡列表，用户滑到「设置」页时根本看不到，
+     * 表现为「首页的 ①-N 卡已经出来了（只依赖 HOOK 三态），设置页的『NFC 触发卡』却没有」。
+     * 这里补上主线程回调。
+     */
+    private static final Handler UI_HANDLER = new Handler(Looper.getMainLooper());
 
     @Override
     public boolean onCreate() {
@@ -98,6 +114,18 @@ public class NfcWakeProvider extends ContentProvider {
         }
 
         out.putBoolean(NfcChannel.RESULT_OK, ok);
+        if (ok) {
+            // 同进程：让 UI 立刻重读 SP（含 HOOK 三态与卡列表），不等 onResume。
+            UI_HANDLER.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        SettingsState.INSTANCE.reloadNfcLocal();
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+        }
         return out;
     }
 

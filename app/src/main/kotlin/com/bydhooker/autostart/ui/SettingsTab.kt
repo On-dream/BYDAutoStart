@@ -237,7 +237,8 @@ private fun snapToStep(value: Int, range: IntRange, step: Int): Int {
 private fun TriplePowerKeyCard() {
     BhCard {
         SwitchPreference(
-            checked = SettingsState.tripleEnabled,
+            // 2026-11-23 用户要求：模块未激活时开关**默认关闭且无法打开**（同首页总开关口径）。
+            checked = SettingsState.bridgeAvailable && SettingsState.tripleEnabled,
             onCheckedChange = { v -> XposedServiceGate.setTripleEnabled(v) },
             title = "三击电源键解锁",
             summary = if (SettingsState.tripleHookReady) {
@@ -245,7 +246,9 @@ private fun TriplePowerKeyCard() {
             } else {
                 "尚未接入系统框架：需在 LSPosed 里给本模块勾选「系统框架」并重启手机"
             },
-            enabled = true,
+            // 未激活（bridgeAvailable=false）时不可操作 —— 与 checked 的「强制关闭」配套，
+            // 否则用户点了会以为生效，实际写不进任何地方。
+            enabled = SettingsState.bridgeAvailable,
         )
     }
 }

@@ -110,6 +110,38 @@ public final class NfcPrewarmHook implements XposedInterface.Hooker {
         }
     }
 
+    /**
+     * 【2026-11-23 新增】注入成功时主动采集一次卡列表。
+     *
+     * 原先 `collectAsync` **只在刷卡页 `onResume` 调用**（`intercept`），于是：
+     *  · 用户不打开刷卡页 ⇒ 卡列表永远不采集；
+     *  · 重装模块后 SP 清空 ⇒ 同样永远为空；
+     *  · **重启手机也不解决** —— 重启只让 tsmclient 重新注入（HOOK 三态回来、
+     *    首页 ①-N 卡显示），但注入路径不触发采集，设置页「NFC 触发卡」依旧没有。
+     * 这正是用户反馈「首页有 NFC 卡、设置页没有触发卡、重启也没用」的完整成因。
+     *
+     * 延迟 2.5 s 是等 Application / 用户服务初始化完（注入发生在 `attach` 阶段，
+     * 立刻反射 `getProprietaryCarKeyCards` 可能拿到空列表）。
+     * 采集本身有 30 s 节流，重复调用安全。
+     */
+    public static void collectOnAttach(final Context ctx) {
+        if (ctx == null) {
+            return;
+        }
+        try {
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        collectAsync(ctx, ctx.getClassLoader());
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }, 2500L);
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 后台采集卡列表（30 s 内只做一次；已在采集中则跳过）。 */
     private static void collectAsync(final Context ctx, final ClassLoader cl) {
         long now = System.currentTimeMillis();

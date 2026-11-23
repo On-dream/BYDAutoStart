@@ -121,7 +121,13 @@ private fun AuthStatusHeroCardHost() {
  *  其余两态（桥不可用 / 模块已关闭）的提示逐字保留，不受影响。 */
 private fun homeNoticeLines(): List<String> = when {
     !SettingsState.bridgeAvailable ->
-        listOf("请先打开一次比亚迪官方 App 以激活模块", "当前仅可查看，配置与授权暂不可用")
+        // 2026-11-23 用户指定文案：原「请先打开一次比亚迪官方 App 以激活模块」已不准确 ——
+        // 模块没被激活时，打开多少次官方 App 都没用，真正要做的是
+        // LSPosed 里启用模块 + 勾作用域 + 给 root 授权。
+        listOf(
+            "请在LSPosed框架激活模块、勾选作用域，并前往root管理器授予模块root权限",
+            "当前仅可查看，配置与授权暂不可用",
+        )
     !SettingsState.enabled ->
         listOf("模块已关闭，不会拦截或下发任何指令")
     !SettingsState.credPresent -> emptyList()  // 2026-11-10 按用户要求删除该提示行
@@ -138,10 +144,13 @@ private fun homeNoticeLines(): List<String> = when {
 private fun MergedCard() {
     BhCard {
         SwitchPreference(
-            checked = SettingsState.enabled,
+            // 2026-11-23 用户要求：模块未激活（bridgeAvailable=false）时
+            // **默认显示关闭且无法打开** —— 此时开关操作写不进任何地方，能点只会误导。
+            // （原约定「总开关永不禁用」据此废止。）
+            checked = SettingsState.bridgeAvailable && SettingsState.enabled,
             onCheckedChange = { v -> XposedServiceGate.writeEnabled(v) },
             title = "APP解锁自动上电",
-            enabled = true,   // 18 §6.1：总开关永不禁用
+            enabled = SettingsState.bridgeAvailable,
         )
         CardDivider()
         val editable = modeAndParamsEditable()

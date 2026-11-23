@@ -1,6 +1,7 @@
 package com.bydhooker.autostart.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import com.bydhooker.autostart.data.XposedServiceGate
 import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 
@@ -34,7 +35,25 @@ import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
  */
 @Composable
 fun NfcCardSpinnerRow() {
+    // 【2026-11-23 修复「首页有 NFC 卡、设置页却没有触发卡」】
+    //
+    // 主界面三个 Tab 是 Pager **内部切页**，不会触发 Activity 的 `onResume`，
+    // 而 NFC 状态（HOOK 三态 + 卡列表）原本只在 `onResume` 里重读（`SettingsActivity:167`）。
+    // 于是：App 打开时 tsmclient 还没上报 ⇒ 状态为空；之后上报成功也只是落了 SP，
+    // 用户滑到「设置」页时读到的仍是旧状态 ⇒ 「NFC 触发卡」整行不显示。
+    // （首页的 ①-N 卡只看 HOOK 三态，所以可能先出来 —— 正是用户看到的现象。）
+    // 这里补一次「进入本行就重读」；配合 `NfcWakeProvider` 的主线程回调，两条路都覆盖。
+    LaunchedEffect(Unit) { SettingsState.reloadNfcLocal() }
+
     val cards = SettingsState.nfcCards
+    // 诊断留痕：状态变化时记一条，下次同类问题可直接从日志看出是「HOOK 没绿」还是「卡列表为空」。
+    LaunchedEffect(SettingsState.nfcHookVisible, cards.size) {
+        com.bydhooker.autostart.core.EventLog.debug(
+            "NFC_ROW",
+            "hookVisible=${SettingsState.nfcHookVisible}|cards=${cards.size}" +
+                "|selectedAid=${SettingsState.nfcSelectedAid.take(8)}",
+        )
+    }
     if (!SettingsState.nfcHookVisible || cards.isEmpty()) {
         return
     }

@@ -56,6 +56,17 @@ public final class NfcHookProbe {
         lastState = s;
         Log.i(TAG, "HOOK_STATE_RESEND|l1=" + l1 + "|l2=" + l2 + "|l3=" + l3);
         NfcWakeClient.sendHookState(ctx, l1, l2, l3);
+        // 2026-11-23：三态上报成功时**顺带采集一次卡列表**。
+        //
+        // 原先只有「打开刷卡页 onResume」才采集（`NfcPrewarmHook.intercept`），
+        // 用户不打开刷卡页 ⇒ 设置页「NFC 触发卡」永远没有数据；而且**重启手机也不会触发**
+        // （重启只会让 tsmclient 重新注入、三态回来）。这正是用户反馈的
+        // 「首页有 NFC 卡、设置页没有触发卡、重启也没用」的完整成因。
+        //
+        // 放在 retryReport 而不是 attach：attach 里有 `sCtx == null` 前置条件，
+        // 实测 sCtx 常已被 hostContext() 提前赋值 ⇒ 整块跳过、采集不跑（本次排查踩到）。
+        // 采集侧有 30s 节流，重复调用安全。
+        NfcPrewarmHook.collectOnAttach(ctx);
         return true;
     }
 
