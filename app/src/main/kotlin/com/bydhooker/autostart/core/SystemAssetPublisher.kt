@@ -121,6 +121,85 @@ object SystemAssetPublisher {
         append("pollIntervalMs=").append(ConfigStore.pollIntervalMs).append("\n")
     }
 
+    // ---------------------------------------------------------------- 只同步配置（v3.3.2）
+
+    /** 防抖后的发布任务（单线程，取消旧的再排新的）。 */
+    @Volatile
+    private var cfgPending: java.util.concurrent.ScheduledFuture<*>? = null
+
+    /** 待发布的**最新**配置文本（防抖期间被覆盖，执行时取最后一份）。 */
+    @Volatile
+    private var cfgPendingText: String? = null
+    private val cfgLock = Any()
+
+    private val cfgExec: java.util.concurrent.ScheduledExecutorService =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "bydhooker-cfg-publish").apply { isDaemon = true }
+        }
+
+    /**
+     * 设置项变更后，把 **`config.txt` 重新发布一次**（v3.3.2 修「改模式三击不跟着变」）。
+     *
+     * 【为什么必须有这一步】三击/刷卡的执行层跑在 `system_server` / `tsmclient` 里，
+     * 它们**没有 remote prefs 通道**，只能读 `/data/system/bydhk/config.txt`
+     * （`ExecConfig.reloadIfChanged()` 按 mtime 重载）。而这个文件原先**只在模块 App
+     * 启动时**发布一次（[publish]），所以设置页改完 `mode` / `enabled` / 窗口参数后，
+     * 三击仍旧按旧值执行 —— 2026-11-25 两份用户日志实证（改 M2 后三击仍 `mode=M1`）。
+     *
+     * 【为什么必须显式传 [text]（v3.3.3 修正）】v3.3.2 初版在这里读 `ConfigStore`，
+     * 结果更糟：`ConfigStore` 在**模块 App 进程**里只是「启动时 `syncFromSnapshot` 的快照」，
+     * UI 改值不走它（它只由宿主进程的 remote prefs 监听更新）。
+     * 实测 12:13:58 prefs 已是 `mode=M1`，12:13:59 发布出去的仍是 `mode=M2` ——
+     * 等于把旧值「固化」进文件。⇒ 文本必须由**调用方**用当前 UI 状态生成。
+     *
+     * 【防抖】滑块（窗口/轮询）拖动会连续写，600 ms 内只发最后一版，
+     * 避免几十次 su 和日志刷屏。
+     */
+    fun requestConfigPublish(ctx: Context?, text: String, delayMs: Long = 600L) {
+        if (ctx == null) {
+            return
+        }
+        val app = ctx.applicationContext ?: ctx
+        cfgPendingText = text
+        synchronized(cfgLock) {
+            cfgPending?.cancel(false)
+            cfgPending = cfgExec.schedule({
+                val latest = cfgPendingText ?: text
+                try {
+                    publishConfigOnly(app, latest)
+                } catch (_: Throwable) {
+                }
+            }, delayMs, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    /**
+     * 只发布 `config.txt`（不碰 so / 凭据）。**阻塞**，只能在后台线程。
+     *
+     * 失败必须留证：否则表现与「改了不生效」完全一样，下次还得从头查。
+     */
+    fun publishConfigOnly(ctx: Context, text: String) {
+        try {
+            val tmpDir = File(ctx.filesDir, TMP_DIR).apply { mkdirs() }
+            val cfg = File(tmpDir, "config.txt")
+            cfg.writeText(text, Charsets.UTF_8)
+            val cmd = "mkdir -p $DEST_DIR; " +
+                    "rm -f $DEST_DIR/config.txt; " +
+                    "cp ${cfg.absolutePath} $DEST_DIR/config.txt; " +
+                    "chmod 644 $DEST_DIR/config.txt"
+            val out = execSu(cmd)
+            val flat = text.trim().replace("\n", "|")
+            if (out.ok) {
+                EventLog.info("CFG_PUBLISH", "配置已同步到 system 侧|$flat")
+            } else {
+                EventLog.error("CFG_PUBLISH",
+                    "配置同步失败（三击仍按旧配置执行）|$flat|${out.text.trim().takeLast(200)}")
+            }
+        } catch (t: Throwable) {
+            EventLog.error("CFG_PUBLISH_ERR", t.javaClass.simpleName + ":" + t.message)
+        }
+    }
+
     /**
      * 凭据发布步骤：**无条件先 rm system 侧旧文件**（v3.0.4）。
      *

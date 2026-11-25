@@ -220,6 +220,7 @@ public class XposedModuleEntry extends XposedModule {
     private void assembleSystemUI(XposedModuleInterface.PackageLoadedParam param) {
         if (!ASSEMBLED_SYSUI.compareAndSet(false, true)) {
             Log.i(TAG, "ASSEMBLE_SYSUI skipped|already assembled");
+            com.bydhooker.autostart.island.SysUiLog.i("SUI_HOOK", "skipped|already assembled");
             return;
         }
         final ClassLoader cl = param == null ? null : param.getDefaultClassLoader();
@@ -234,18 +235,22 @@ public class XposedModuleEntry extends XposedModule {
                     }
                 }
                 try {
+                    // 装配期的日志也要能被导出（否则岛不显示时没有任何证据）
+                    com.bydhooker.autostart.island.SysUiLog.initFromActivityThread();
                     hookFocusWhitelist(cl);
                     hookIslandBus(cl);
                     if (sysuiWhitelistHooked && sysuiBusHooked) {
-                        Log.i(TAG, "SYSUI_HOOK_OK|whitelist=1|bus=1");
+                        com.bydhooker.autostart.island.SysUiLog.i("SUI_HOOK",
+                                "OK|whitelist=1|bus=1");
                         return;
                     }
                 } catch (Throwable tt) {
-                    Log.w(TAG, "SYSUI_HOOK_RETRY|" + tt.getClass().getSimpleName());
+                    com.bydhooker.autostart.island.SysUiLog.w("SUI_HOOK_RETRY",
+                            tt.getClass().getSimpleName());
                 }
             }
-            Log.w(TAG, "SYSUI_HOOK_FAIL|whitelist=" + sysuiWhitelistHooked
-                    + "|bus=" + sysuiBusHooked);
+            com.bydhooker.autostart.island.SysUiLog.w("SUI_HOOK",
+                    "FAIL|whitelist=" + sysuiWhitelistHooked + "|bus=" + sysuiBusHooked);
         }, "bydhk-sysui-hook");
         t.setDaemon(true);
         t.start();
@@ -260,12 +265,27 @@ public class XposedModuleEntry extends XposedModule {
         Class<?> mgr = Class.forName(
                 "com.miui.systemui.notification.NotificationSettingsManager", false, use);
         boolean any = false;
+        // HyperOS4（SDK 37）：canShowFocusState / canShowFocusStateApp → int
         for (String name : new String[]{"canShowFocusState", "canShowFocusStateApp"}) {
-            Method m = findIntMethod(mgr, name);
+            Method m = findMethod(mgr, name, int.class, 2);
             if (m != null) {
                 hook(m).intercept(
                         com.bydhooker.autostart.hook.systemui.FocusWhitelistHook.INSTANCE);
                 any = true;
+                com.bydhooker.autostart.island.SysUiLog.i("SUI_WHITELIST", "已挂载 " + name + "（int）");
+            }
+        }
+        // HyperOS3（SDK 36）：整套 dex 里没有 canShowFocusState，只有
+        // canShowFocus(Context,String) static boolean（OS3.0.314 MiuiSystemUI 实证）。
+        // 默认返回 true 本不挡岛，但用户手动关过焦点通知时会返回 false ⇒ 这里补齐两代一致。
+        if (!any) {
+            Method m = findMethod(mgr, "canShowFocus", boolean.class, 2);
+            if (m != null) {
+                hook(m).intercept(
+                        com.bydhooker.autostart.hook.systemui.FocusWhitelistBoolHook.INSTANCE);
+                any = true;
+                com.bydhooker.autostart.island.SysUiLog.i("SUI_WHITELIST",
+                        "已挂载 canShowFocus（boolean，OS3 形态）");
             }
         }
         sysuiWhitelistHooked = any;
@@ -286,11 +306,11 @@ public class XposedModuleEntry extends XposedModule {
         sysuiBusHooked = true;
     }
 
-    /** 按「方法名 + 2 参数 + 返回 int」找 public final 方法，不硬编码参数类名。 */
-    private static Method findIntMethod(Class<?> c, String name) {
+    /** 按「方法名 + 参数个数 + 返回类型」找方法（不硬编码参数类名，兼容两代 ROM 的返回类型差异）。 */
+    private static Method findMethod(Class<?> c, String name, Class<?> returnType, int argc) {
         for (Method m : c.getDeclaredMethods()) {
-            if (name.equals(m.getName()) && m.getReturnType() == int.class
-                    && m.getParameterTypes().length == 2) {
+            if (name.equals(m.getName()) && m.getReturnType() == returnType
+                    && m.getParameterTypes().length == argc) {
                 m.setAccessible(true);
                 return m;
             }

@@ -90,6 +90,16 @@ object WindowManager {
     @Volatile var awakeCalledThisWindow = false
         private set
 
+    /**
+     * 本窗触发来源（`app` / `nfc` / `triple`）。
+     * 以前只在 `onUnlockCommand` 里临时用来写日志、没有留存；「解锁未锁车提醒」要按来源
+     * 决定发不发（用户拍板只做三击），所以在开窗时记下来（docs/45 §3）。
+     */
+    @Volatile private var windowSource: String = ""
+    /** 最近一次新鲜帧里的左前门锁值（2=已锁 / 1=未锁），与它所属帧的时间戳。 */
+    @Volatile private var lastLockFl: Int? = null
+    @Volatile private var lastLockTs: Long = 0L
+
     fun onUnlock(event: com.bydhooker.autostart.model.UnlockEvent) {
         val now = event.ts
         if (isWindowOpen(now)) {
@@ -115,6 +125,9 @@ object WindowManager {
         lastLf = null
         staleStreak = 0
         awakeCalledThisWindow = false
+        windowSource = event.source
+        lastLockFl = null
+        lastLockTs = 0L
         EventLog.info("WINDOW_OPEN", "开始 ${ConfigStore.windowSeconds} 秒等待，寻找开门动作")
         IslandReporter.report(
             IslandEvent.TYPE_OPEN, now, windowDeadlineTs, event.source, 0L,
@@ -145,11 +158,18 @@ object WindowManager {
         // 必须在重置前读：已下发时岛由 VERIFY_OK / VERIFY_PENDING 终态收尾，
         // 若这里再发 CLOSE，会把刚切到 S2 的勾动画立刻 cancel（docs/37 §8.10）。
         val sent = alreadySent
+        // 未锁车提醒的三个判据也只能在重置前取（docs/45 §3）
+        val src = windowSource
+        val lockFl = lastLockFl
+        val lockTs = lastLockTs
         windowDeadlineTs = 0L
         alreadySent = false
         lastLf = null
         staleStreak = 0
         awakeCalledThisWindow = false
+        windowSource = ""
+        lastLockFl = null
+        lastLockTs = 0L
         StatusPoller.stop()
         // 15 §3.4：线程池只在窗口期存在。用优雅关池（不打断在途复核）
         NetExecutor.shutdown()
@@ -160,6 +180,43 @@ object WindowManager {
             IslandReporter.report(
                 IslandEvent.TYPE_FAIL, System.currentTimeMillis(), 0L, "", 0L,
             )
+        }
+        maybeWarnUnlocked(sent = sent, reason = reason, src = src, lockFl = lockFl, lockTs = lockTs)
+    }
+
+    /**
+     * 解锁未锁车提醒（`docs/45`，2026-11-25 用户拍板口径）。
+     *
+     * 五个条件全中才发，一个不中就不发 —— 宁可漏报也不要误报噪音：
+     * ① `!sent`：全程未下发（未开门 ⇒ 未上电）；
+     * ② `reason == "超时"`：自然到期才算；「数据持续陈旧」说明锁值也不可信，
+     *    「复核完成」已上电；
+     * ③ `src == "triple"`：本期只做三击电源键（App 解锁/NFC 刷卡时人就在车边）；
+     * ④ `lockFl == 1`：左前门锁未锁（2=已锁，rt-result-1 实测；1 由 M2 的 2→1 边沿反推）；
+     * ⑤ 锁值新鲜：`now - lockTs <= dataAgeLimitSec`（G-5「未知/陈旧值不触发」）。
+     *
+     * 展示链失败绝不影响业务：`IslandReporter.report` 内部已全吞异常 + 子线程。
+     */
+    private fun maybeWarnUnlocked(sent: Boolean, reason: String, src: String, lockFl: Int?, lockTs: Long) {
+        try {
+            if (sent || reason != "超时" || src != "triple") return
+            if (lockFl != 1) return
+            val ageLimitMs = ConfigStore.dataAgeLimitSec.toLong() * 1000L
+            val now = System.currentTimeMillis()
+            if (lockTs <= 0L || now - lockTs > ageLimitMs) {
+                EventLog.debug(
+                    "UNLOCK_WARN", "跳过：锁值不新鲜（age=${(now - lockTs) / 1000}s，上限=${ageLimitMs / 1000}s）",
+                )
+                return
+            }
+            EventLog.info(
+                "UNLOCK_WARN", "三击解锁后 ${ConfigStore.windowSeconds}s 未开门且车未锁，发提醒",
+            )
+            IslandReporter.report(
+                IslandEvent.TYPE_UNLOCKED_WARN, now, 0L, src, 0L,
+            )
+        } catch (_: Throwable) {
+            // 提醒是附加功能，任何异常都不允许波及业务
         }
     }
 
@@ -174,6 +231,19 @@ object WindowManager {
 
     fun onLfObserved(lf: Int) {
         lastLf = lf
+    }
+
+    /**
+     * 新鲜帧里的左前门锁值（`docs/45`）。
+     *
+     * 只在**新鲜帧**调用（陈旧帧整帧丢弃，锁值同样不可信，与 `lastLf` 同一口径）。
+     * `fl == null`（字段缺失）时**保留上一次的值但不刷新时间戳** —— 让它自然变陈旧，
+     * 由 `maybeWarnUnlocked` 的新鲜度检查挡掉，而不是当成 0 去误判。
+     */
+    fun onLockObserved(fl: Int?, ts: Long) {
+        if (fl == null) return
+        lastLockFl = fl
+        lastLockTs = ts
     }
 
     fun onStaleFrame() {

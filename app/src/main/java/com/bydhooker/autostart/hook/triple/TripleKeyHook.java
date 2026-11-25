@@ -90,8 +90,10 @@ public final class TripleKeyHook {
      * 必须重启手机（system_server 只在启动时加载模块）。改完之后最常问的一句就是
      * 「现在跑的是新代码还是旧的」，靠 `HOOKS_OK` 里的这个数字一眼确认。
      * 14 = 2026-11-13 加三击短震（前一版 13 无震动）。
+     * 19 = 2026-11-24 三击动作改由 `triggerMultiPress(3)` 接管（见 {@link MultiPressHooker}）。
+     * 20 = 2026-11-25 日志追加失败自愈（重建文件）+ 振动获取三路径与分级诊断。
      */
-    private static final int HOOK_VER = 18;
+    private static final int HOOK_VER = 20;
 
     /**
      * 命中三击时的短震时长（ms）。
@@ -103,6 +105,9 @@ public final class TripleKeyHook {
 
     /** MAXCOUNT 日志节流：该方法在按键路径上被频繁调用，不能每次都写文件。 */
     private static final long MAXCOUNT_LOG_THROTTLE_MS = 5000L;
+
+    /** MULTI（非三击）日志节流：单击/双击路径同样频繁。 */
+    private static final long MULTI_LOG_THROTTLE_MS = 5000L;
 
     private static final int RETRY_TIMES = 12;
     private static final long RETRY_INTERVAL_MS = 3000L;
@@ -116,6 +121,7 @@ public final class TripleKeyHook {
     private static volatile ClassLoader sysClassLoader = null;
     private static volatile long lastTripleTs = 0L;
     private static volatile long lastMaxCountLogTs = 0L;
+    private static volatile long lastMultiLogTs = 0L;
     private static volatile boolean installing = false;
     private static volatile boolean installed = false;
 
@@ -322,11 +328,11 @@ public final class TripleKeyHook {
             tripleLog("TRIPLE|HOOK_CLICK_ERR|" + t.getClass().getSimpleName());
         }
 
-        // Hook C：只读观测（最便宜的诊断：系统把这几下判成了几击）
+        // Hook C：三击落点（v19 起在这里就地接管，见 MultiPressHooker 注释）
         try {
             Method mm = c.getDeclaredMethod("triggerMultiPress", int.class);
             mm.setAccessible(true);
-            binder.bind(mm, new MultiPressProbe());
+            binder.bind(mm, new MultiPressHooker());
             any = true;
             tripleLog("TRIPLE|HOOK_PROBE_OK|round=" + (round + 1));
         } catch (Throwable t) {
@@ -371,62 +377,101 @@ public final class TripleKeyHook {
     private static final class TripleClickHooker implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            try {
-                Object thiz = chain.getThisObject();
-                Context ctx = readPowerContext(thiz);
-                boolean on = tripleSwitchOn(ctx);
-                long now = System.currentTimeMillis();
-                tripleLog("TRIPLE|HIT|on=" + on + "|ctx=" + (ctx != null) + "|ts=" + now);
-                if (!on) {
-                    return chain.proceed();
-                }
-                if (now - lastTripleTs < DEDUPE_MS) {
-                    tripleLog("TRIPLE|DEDUPE|ts=" + now);
-                    return Boolean.TRUE;
-                }
-                lastTripleTs = now;
-                if (ctx == null) {
-                    tripleLog("TRIPLE|NO_CONTEXT|fallback-original");
-                    return chain.proceed();
-                }
-                final Context fctx = ctx;
-                final long fts = now;
-                Thread t = new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        // 先震（几毫秒），再跨进程调用（可能几百毫秒）。
-                        // 顺序不能反：震动是给用户的「已识别」回执，必须立刻到。
-                        vibrateShort(fctx);
-                        notifyModule(fctx, fts);
-                    }
-                }, "bydhk-triple-fire");
-                t.setDaemon(true);
-                t.start();
-                // 返回 TRUE：跳过 OriginalPowerKeyRuleBridge ⇒ 三击不会落回双击分支 / mi_pay
-                return Boolean.TRUE;
-            } catch (Throwable t) {
-                tripleLog("TRIPLE|INTERCEPT_ERR|" + t.getClass().getSimpleName());
-                try {
-                    return chain.proceed();
-                } catch (Throwable ignored) {
-                    return Boolean.FALSE;
-                }
-            }
+            return onTripleHit(chain, "click");
         }
     }
 
-    /** Hook C：`triggerMultiPress(int)` —— 只读观测，绝不改行为。 */
-    private static final class MultiPressProbe implements XposedInterface.Hooker {
+    /**
+     * Hook C：`triggerMultiPress(int)` —— **三击的真正落点**（v19 起）。
+     *
+     * 【为什么从「只读观测」改成「接管」】2026-11-24 一位 HyperOS3（SDK 36）用户日志实证：
+     * `MAXCOUNT|orig=1|ret=3` 与 `MULTI|count=3` 都出现，但 `HIT` 一行都没有 ——
+     * 说明 `triggerMultiPress(3)` 进了 Hook，而它内部的 `triggerTripleClick()` 调用
+     * **没有走方法入口**（ART 把这种同类私有小方法内联进了调用方；Hook 外层方法后，
+     * `chain.proceed()` 执行的是原编译代码副本，内层 Hook 被绕过）。
+     *
+     * 所以这里不再依赖 Hook B：count == 3 时**就地接管**，直接 `return TRUE`
+     * （= `triggerMultiPress` 返回 true ⇒ `onMiuiMultiPress` 不再回落
+     * `OriginalPowerKeyRuleBridge`），其余 count 原样 `proceed()`。
+     * Hook B 保留作冗余：真机若走的是 B 的入口，两者共用 3 s 去重，不会双触发。
+     */
+    private static final class MultiPressHooker implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
+            int count = -1;
             try {
-                tripleLog("TRIPLE|MULTI|count=" + chain.getArg(0)
-                        + "|sw=" + tripleSwitchOn(null));
+                Object a = chain.getArg(0);
+                if (a instanceof Integer) {
+                    count = ((Integer) a).intValue();
+                }
+            } catch (Throwable ignored) {
+            }
+            if (count == 3) {
+                return onTripleHit(chain, "multi");
+            }
+            // 其余击数只观测（节流），保留「系统把它判成了几击」这条最便宜的诊断
+            try {
+                long now = System.currentTimeMillis();
+                if (now - lastMultiLogTs > MULTI_LOG_THROTTLE_MS) {
+                    lastMultiLogTs = now;
+                    tripleLog("TRIPLE|MULTI|count=" + count + "|sw=" + tripleSwitchOn(null));
+                }
             } catch (Throwable ignored) {
                 // 观测失败绝不影响原逻辑
             }
             return chain.proceed();
         }
+    }
+
+    /**
+     * 三击命中后的统一处理（Hook B / C 共用）。
+     *
+     * 返回 `Boolean.TRUE` = 吞掉这次三击，不回落原逻辑；返回 `chain.proceed()` = 交还原生。
+     * 开关关、取不到 Context、异常 —— 一律回落，绝不改变未启用时的系统行为。
+     */
+    private static Object onTripleHit(XposedInterface.Chain chain, String via) throws Throwable {
+        try {
+            Object thiz = chain.getThisObject();
+            Context ctx = readPowerContext(thiz);
+            boolean on = tripleSwitchOn(ctx);
+            long now = System.currentTimeMillis();
+            tripleLog("TRIPLE|HIT|via=" + via + "|on=" + on + "|ctx=" + (ctx != null) + "|ts=" + now);
+            if (!on) {
+                return chain.proceed();
+            }
+            if (now - lastTripleTs < DEDUPE_MS) {
+                tripleLog("TRIPLE|DEDUPE|via=" + via + "|ts=" + now);
+                return Boolean.TRUE;
+            }
+            lastTripleTs = now;
+            if (ctx == null) {
+                tripleLog("TRIPLE|NO_CONTEXT|fallback-original");
+                return chain.proceed();
+            }
+            startFire(ctx, now);
+            // 返回 TRUE：跳过 OriginalPowerKeyRuleBridge ⇒ 三击不会落回双击分支 / mi_pay
+            return Boolean.TRUE;
+        } catch (Throwable t) {
+            tripleLog("TRIPLE|INTERCEPT_ERR|" + via + "|" + t.getClass().getSimpleName());
+            try {
+                return chain.proceed();
+            } catch (Throwable ignored) {
+                return Boolean.FALSE;
+            }
+        }
+    }
+
+    /** 动作下发：先短震（用户回执，必须立刻到），再跨进程执行（可能几百毫秒）。 */
+    private static void startFire(final Context ctx, final long ts) {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                vibrateShort(ctx);
+                notifyModule(ctx, ts);
+            }
+        }, "bydhk-triple-fire");
+        t.setDaemon(true);
+        t.start();
     }
 
     // ---------------------------------------------------------------- 动作
@@ -448,32 +493,79 @@ public final class TripleKeyHook {
      * 这里是功能回执，用独立 Vibrator 更可控。
      */
     private static void vibrateShort(Context ctx) {
+        if (ctx == null) {
+            tripleLog("TRIPLE|VIBRATE|ctx=null");
+            return;
+        }
         try {
             android.os.Vibrator v = null;
+            String via = "none";
             // Android 12+ 用 VibratorManager（VIBRATOR_SERVICE 已废弃）
             if (android.os.Build.VERSION.SDK_INT >= 31) {
-                Object vm = ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                Object vm = null;
+                try {
+                    vm = ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                } catch (Throwable ignored) {
+                }
                 if (vm instanceof android.os.VibratorManager) {
-                    v = ((android.os.VibratorManager) vm).getDefaultVibrator();
+                    try {
+                        v = ((android.os.VibratorManager) vm).getDefaultVibrator();
+                        via = "manager";
+                    } catch (Throwable t) {
+                        tripleLog("TRIPLE|VIBRATE_ERR|getDefaultVibrator|"
+                                + t.getClass().getSimpleName());
+                    }
+                } else {
+                    // v3.3.5 诊断：VibratorManager 拿不到时把实际拿到的类型记下来
+                    tripleLog("TRIPLE|VIBRATE|vm=" + (vm == null ? "null" : vm.getClass().getName()));
                 }
             }
             if (v == null) {
-                Object o = ctx.getSystemService(Context.VIBRATOR_SERVICE);
+                Object o = null;
+                try {
+                    o = ctx.getSystemService(Context.VIBRATOR_SERVICE);
+                } catch (Throwable ignored) {
+                }
                 if (o instanceof android.os.Vibrator) {
                     v = (android.os.Vibrator) o;
+                    via = "legacy";
                 }
             }
-            if (v == null || !v.hasVibrator()) {
-                tripleLog("TRIPLE|VIBRATE|no-vibrator");
+            if (v == null) {
+                // 最后兜底：泛型查找（个别 ROM 的字符串键返回 null，但按类型能拿到）
+                try {
+                    Object o2 = ctx.getSystemService(android.os.Vibrator.class);
+                    if (o2 instanceof android.os.Vibrator) {
+                        v = (android.os.Vibrator) o2;
+                        via = "typed";
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            if (v == null) {
+                tripleLog("TRIPLE|VIBRATE|svc=null|三条路径均未取到 Vibrator");
+                Log.w(TAG, "TRIPLE|VIBRATE|svc=null");
+                return;
+            }
+            boolean has;
+            try {
+                has = v.hasVibrator();
+            } catch (Throwable t) {
+                tripleLog("TRIPLE|VIBRATE_ERR|hasVibrator|" + t.getClass().getSimpleName());
+                return;
+            }
+            if (!has) {
+                tripleLog("TRIPLE|VIBRATE|no-vibrator|via=" + via);
                 return;
             }
             // 一次性短震：强度用系统默认（不做自定义 amplitude，避免不同机型表现差异太大）
             v.vibrate(android.os.VibrationEffect.createOneShot(
                     VIBRATE_MS, android.os.VibrationEffect.DEFAULT_AMPLITUDE));
-            tripleLog("TRIPLE|VIBRATE|ok=" + VIBRATE_MS + "ms");
+            tripleLog("TRIPLE|VIBRATE|ok=" + VIBRATE_MS + "ms|via=" + via);
         } catch (Throwable t) {
-            // 震动失败绝不影响三击本身
-            tripleLog("TRIPLE|VIBRATE_ERR|" + t.getClass().getSimpleName());
+            // 震动失败绝不影响三击本身；额外打 logcat，防止日志文件本身不可写时丢证据
+            tripleLog("TRIPLE|VIBRATE_ERR|" + t.getClass().getSimpleName() + "|" + t.getMessage());
+            Log.e(TAG, "TRIPLE|VIBRATE_ERR", t);
         }
     }
 
@@ -611,13 +703,39 @@ public final class TripleKeyHook {
      * 不能无限增长；丢弃历史比拖慢按键安全。
      */
     private static synchronized void tripleLog(String line) {
-        String out;
-        synchronized (TS) {
-            out = TS.format(new Date()) + "|" + line;
-        }
+        String out = stamp(line);
         Log.i(TAG, out);
         try {
             File f = new File(TRIPLE_LOG);
+            if (appendTripleLog(f, out)) {
+                return;
+            }
+            // 【v3.3.5】追加失败必须自愈，否则日志会**永久静默停摆**。
+            // 真机实证（2026-11-25 OS3 用户）：文件最后一条停在 11-24 的 HOOKS_OK，
+            // 而业务日志显示三击一直在执行 —— 那个文件大概率被 root 侧写成了
+            // `root:root 0644`（system_server uid 1000 只能读不能追加）。
+            // 删掉重建可以让新 inode 继承 /data/system 的 `system:system`，写入即恢复。
+            if (reopenTripleLog(f)) {
+                appendTripleLog(f, stamp("TRIPLE|LOG_REOPENED|旧日志不可写，已重建"));
+                appendTripleLog(f, out);
+            } else {
+                // 重建也失败：只留 logcat（此时事件日志另一条链仍可用）
+                Log.w(TAG, "TRIPLE|LOG_UNWRITABLE|" + TRIPLE_LOG);
+            }
+        } catch (Throwable ignored) {
+            // 日志失败绝不影响按键路径
+        }
+    }
+
+    private static String stamp(String line) {
+        synchronized (TS) {
+            return TS.format(new Date()) + "|" + line;
+        }
+    }
+
+    /** 追加一行；成功返回 true。任何异常都吞掉并返回 false（绝不阻塞按键路径）。 */
+    private static boolean appendTripleLog(File f, String out) {
+        try {
             if (f.exists() && f.length() > MAX_LOG_BYTES) {
                 FileOutputStream clear = new FileOutputStream(f, false);
                 try {
@@ -636,8 +754,28 @@ public final class TripleKeyHook {
             } finally {
                 fos.close();
             }
-        } catch (Throwable ignored) {
-            // 日志失败绝不影响按键路径
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 删除后重建空文件；返回是否已可写。 */
+    private static boolean reopenTripleLog(File f) {
+        try {
+            if (f.exists() && !f.delete()) {
+                return false;
+            }
+            FileOutputStream fos = new FileOutputStream(f, false);
+            try {
+                fos.write("".getBytes(Charset.forName("UTF-8")));
+                fos.flush();
+            } finally {
+                fos.close();
+            }
+            return f.exists();
+        } catch (Throwable t) {
+            return false;
         }
     }
 }

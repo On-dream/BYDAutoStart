@@ -190,21 +190,55 @@ object XposedServiceGate {
     fun writeEnabled(v: Boolean) {
         editor()?.putBoolean(BridgeContract.KEY_ENABLED, v)?.commit()
         SettingsState.enabled = v
+        republishConfig()
     }
 
     fun writeMode(v: String) {
         editor()?.putString(BridgeContract.KEY_MODE, v)?.commit()
         SettingsState.mode = v
+        republishConfig()
     }
 
     fun writeWindowSeconds(v: Int) {
         editor()?.putInt(BridgeContract.KEY_WINDOW_SECONDS, v)?.commit()
         SettingsState.windowSeconds = v
+        republishConfig()
     }
 
     fun writePollIntervalSec(seconds: Int) {
         editor()?.putInt(BridgeContract.KEY_POLL_INTERVAL_MS, seconds * 1000)?.commit()
         SettingsState.pollIntervalSec = seconds
+        republishConfig()
+    }
+
+    /**
+     * 把上面这四个键的新值同步到 `/data/system/bydhk/config.txt`（v3.3.2）。
+     *
+     * 【为什么】`system_server` / `tsmclient` 的执行层读的是这个文件，不是 remote prefs。
+     * 不重发 ⇒ 三击/刷卡照旧配置跑（2026-11-25 两份日志实证）。
+     *
+     * 【文本必须在这里生成（v3.3.3 修正）】不能交给 `SystemAssetPublisher` 读 `ConfigStore`：
+     * 那个单例在**模块 App 进程**里只是启动快照，UI 改值不会更新它
+     * ⇒ 实测把 `mode=M1` 发布成了 `mode=M2`。这里直接用刚写完的 [SettingsState]。
+     */
+    private fun republishConfig() {
+        try {
+            com.bydhooker.autostart.core.SystemAssetPublisher
+                .requestConfigPublish(
+                    com.bydhooker.autostart.BydApp.appCtx,
+                    buildExecConfigText()
+                )
+        } catch (_: Throwable) {
+            // 发布失败不能影响设置写入本身
+        }
+    }
+
+    /** 与 `SystemAssetPublisher.buildConfigText()` 同格式（键名以 `BridgeContract` 为准）。 */
+    private fun buildExecConfigText(): String = buildString {
+        append("enabled=").append(SettingsState.enabled).append("\n")
+        append("mode=").append(SettingsState.mode).append("\n")
+        append("windowSeconds=").append(SettingsState.windowSeconds).append("\n")
+        append("pollIntervalMs=").append(SettingsState.pollIntervalSec * 1000).append("\n")
     }
 
     fun writeDataAgeLimitSec(v: Int) {

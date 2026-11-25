@@ -10,6 +10,7 @@ import androidx.annotation.NonNull;
 
 import com.bydhooker.autostart.island.IslandController;
 import com.bydhooker.autostart.island.IslandEvent;
+import com.bydhooker.autostart.island.SysUiLog;
 
 import io.github.libxposed.api.XposedInterface;
 
@@ -56,21 +57,24 @@ public final class IslandBusHook implements XposedInterface.Hooker {
                 return empty(false);
             }
             Context ctx = ((ContentProvider) thiz).getContext();
+            SysUiLog.init(ctx);
             if (!allowed(ctx, uid)) {
-                android.util.Log.w("BYDHK", "ISLAND_DENY|uid=" + uid);
+                SysUiLog.w("ISLAND_DENY", "uid=" + uid);
                 return empty(false);
             }
             Bundle extras = (Bundle) chain.getArg(2);
             if (extras == null) {
+                SysUiLog.w("ISLAND_DROP", "extras=null");
                 return empty(false);
             }
             IslandController.onEvent(ctx, extras);
-            android.util.Log.i("BYDHK", "ISLAND_RECV|type=" + extras.getString(IslandEvent.K_TYPE)
+            SysUiLog.i("ISLAND_RECV", "type=" + extras.getString(IslandEvent.K_TYPE)
                     + "|seq=" + extras.getLong(IslandEvent.K_SEQ, -1L)
                     + "|accepted=" + IslandController.lastAccepted);
             return empty(true);
         } catch (Throwable t) {
             // 展示链异常一律吞掉，绝不把异常抛回 SystemUI 的 Provider
+            SysUiLog.w("ISLAND_ERR", t.getClass().getSimpleName());
             return empty(false);
         }
     }

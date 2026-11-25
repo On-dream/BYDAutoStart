@@ -31,6 +31,10 @@ object SystemLogReader {
         // v3.0：ExecLog 已并入 EventLog（同一份 events.log），bydhk-exec.log 不再生成
         Src("system 侧日志（system_server：业务 + so/配置引导）", "/data/system/bydhk-exec/bydhooker/events.log"),
         Src("电源键三击 Hook 日志（system_server）", "/data/system/bydhk-triple.log"),
+        // v3.3.2：超级岛链路在 com.android.systemui（独立 uid），日志落在它自己的 DE 存储；
+        // 导出时用 root 读回来，否则「岛不显示」这类问题完全没有证据可查。
+        Src("超级岛链路日志（SystemUI 进程：装配 / 事件收发 / 白名单）",
+            "/data/user_de/0/com.android.systemui/files/bydhooker/sysui.log"),
     )
 
     /** 读取结果：`text` 为 null 表示读不到（root 不可用或超时）。 */

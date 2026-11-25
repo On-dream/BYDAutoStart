@@ -95,12 +95,14 @@ object StatusPoller {
             // 边沿判定需要「上一帧」的门值，先取旧值再更新（原实现传 null → 永远 initial）
             val prevLf = WindowManager.lastLf
             WindowManager.onLfObserved(frame.leftFrontDoor ?: -1)
+            // 门锁仅供「解锁未锁车提醒」使用（docs/45）：只在新鲜帧更新，陈旧帧不动它
+            WindowManager.onLockObserved(frame.doorLockFL, now)
             // STATUS 观测日志：M1 门开取值（doorOpenValue=1）至今**无实测样本**，
             // 每次轮询落一行，供真车核对「关门/开门时 leftFrontDoor 到底是几」
             EventLog.debug(
                 "STATUS",
-                "车况：age=${age}s，门=${frame.leftFrontDoor}，powerGear=${frame.powerGear}" +
-                    "，已上电=${frame.powerGear == 3}",
+                "车况：age=${age}s，门=${frame.leftFrontDoor}，锁=${frame.doorLockFL}" +
+                    "，powerGear=${frame.powerGear}，已上电=${frame.powerGear == 3}",
             )
             val v = Gate.evaluate(
                 frame,

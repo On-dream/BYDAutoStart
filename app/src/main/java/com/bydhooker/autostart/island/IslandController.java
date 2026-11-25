@@ -41,6 +41,14 @@ public final class IslandController {
     private static final long FAIL_HOLD_MS = 1800L;      // 1.0 s 动画播完 + 0.8 s 停留
     private static final long S1_WATCHDOG_MS = 90_000L;
 
+    /**
+     * 「解锁未锁车」提醒：**与岛完全分离**的独立 channel / 独立 id。
+     * 岛是过程动画（最长 90 s 自消、同 id 覆盖），这条要求留存到用户手动清除，
+     * 混用 4242 会被下一次岛事件直接覆盖，等于没留（docs/45 §4）。
+     */
+    private static final int NOTIF_ID_WARN = 4243;
+    private static final String CHANNEL_ID_WARN = "bydhk_unlock_warn";
+
     private static final Handler H = new Handler(Looper.getMainLooper());
 
     /**
@@ -55,6 +63,7 @@ public final class IslandController {
     public static volatile boolean lastAccepted;
     private static volatile Context sCtx;
     private static volatile boolean sChannelReady;
+    private static volatile boolean sWarnChannelReady;
 
     private static final Runnable CANCEL = () -> {
         try {
@@ -87,11 +96,24 @@ public final class IslandController {
             }
             sLastTs = ts;
             lastAccepted = true;
+
+            String type = b.getString(IslandEvent.K_TYPE, "");
+            if (IslandEvent.TYPE_UNLOCKED_WARN.equals(type)) {
+                // 【非岛事件】不进岛管线：既不能走 `IslandPayload.build`（会拼出一条
+                // 没有 island 结构的畸形 JSON），也不能碰岛计时器 —— 否则
+                // `H.removeCallbacks(CANCEL)` 会把正在播的 S3 岛的自动收岛定时器清掉，
+                // 岛就永久挂在状态栏上了（docs/45 §10）。
+                postUnlockedWarning(
+                        ctx,
+                        b.getString(IslandEvent.K_SOURCE, ""),
+                        b.getInt(IslandEvent.K_WINDOW, 60));
+                return;
+            }
+
             sCtx = ctx.getApplicationContext() != null ? ctx.getApplicationContext() : ctx;
 
             H.removeCallbacks(CANCEL);
 
-            String type = b.getString(IslandEvent.K_TYPE, "");
             if (IslandEvent.TYPE_CLOSE.equals(type)) {
                 CANCEL.run();
                 return;
@@ -136,6 +158,14 @@ public final class IslandController {
                 .setOngoing(false);
         Notification n = builder.build();
         n.extras.putString("miui.focus.param", json);
+        // 【焦点通知身份标记（v3.3.4）】OS3 的判定是
+        // `FocusUtils.isFocusNotification = extras.getBoolean("miui.focus.isFocus")
+        //   || extras.getParcelable("miui.focus.rv") instanceof RemoteViews`
+        // —— 只带 `miui.focus.param` 而没有这两者之一，通知会被当成**普通通知**：
+        // 状态栏能看见，但永远进不了焦点/岛管线（2026-11-25 OS3 用户实测：
+        // 出现「等待开门上电」通知却无岛）。我们不用 RemoteViews，所以补这个布尔位。
+        // 系统侧 `FocusCoordinator` 处理时会 remove 它，属投递期标记，不会被反复消费。
+        n.extras.putBoolean("miui.focus.isFocus", true);
         return n;
     }
 
@@ -161,6 +191,64 @@ public final class IslandController {
         ch.setDescription("解锁自动上电的实时状态");
         nm.createNotificationChannel(ch);
         sChannelReady = true;
+    }
+
+    /**
+     * 「解锁未锁车」提醒（`docs/45`）：普通通知，**不进岛管线**。
+     *
+     * 只由 `WindowManager.closeWindow` 在五个条件全中时触发（未下发 / 超时 /
+     * 三击来源 / 锁值=未锁 / 锁值新鲜），这里只负责展示，不再做任何判定。
+     * 不带 `miui.focus.param` / `miui.focus.isFocus` —— 带任何一个它就会变成岛。
+     */
+    private static void postUnlockedWarning(Context ctx, String source, int windowSeconds) {
+        try {
+            NotificationManager nm =
+                    (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) {
+                return;
+            }
+            ensureWarnChannel(nm);
+            int win = windowSeconds > 0 ? windowSeconds : 60;
+            String text = srcText(source) + "解锁后 " + win
+                    + " 秒内未检测到开门，本次未上电。请确认车辆已锁好。";
+            Notification n = new Notification.Builder(ctx, CHANNEL_ID_WARN)
+                    .setSmallIcon(Icon.createWithBitmap(dot()))
+                    .setContentTitle("车辆未上锁")
+                    .setContentText(text)
+                    .setStyle(new Notification.BigTextStyle().bigText(text))
+                    .setCategory(Notification.CATEGORY_STATUS)
+                    .setAutoCancel(true)
+                    .setOngoing(false)
+                    .setShowWhen(true)
+                    .build();
+            nm.notify(NOTIF_ID_WARN, n);
+            android.util.Log.i("BYDHK", "WARN_POSTED|src=" + source + "|window=" + win);
+        } catch (Throwable t) {
+            // 展示链失败静默：提醒只是附加功能，绝不影响业务
+            android.util.Log.w("BYDHK", "WARN_POST_FAIL|" + t.getClass().getSimpleName());
+        }
+    }
+
+    private static String srcText(String source) {
+        if ("triple".equals(source)) {
+            return "三击电源键";
+        }
+        if ("nfc".equals(source)) {
+            return "NFC 刷卡";
+        }
+        return "App 解锁";
+    }
+
+    private static void ensureWarnChannel(NotificationManager nm) {
+        if (sWarnChannelReady) {
+            return;
+        }
+        NotificationChannel ch = new NotificationChannel(
+                CHANNEL_ID_WARN, "车辆安全提醒", NotificationManager.IMPORTANCE_HIGH);
+        ch.setDescription("解锁后未上电、车辆仍处于解锁状态时的提醒");
+        ch.setShowBadge(true);
+        nm.createNotificationChannel(ch);
+        sWarnChannelReady = true;
     }
 
     /** 24x24 alpha 白点；状态栏小图标必须是纯 alpha 形状。 */

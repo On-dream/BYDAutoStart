@@ -37,6 +37,15 @@ public final class IslandEvent {
     /** 窗口关闭/未命中，立即收岛。 */
     public static final String TYPE_CLOSE = "CLOSE";
 
+    /**
+     * 【非岛事件】解锁了但车没上电、车还锁着没锁上 —— 要留一条**常驻通知**提醒。
+     *
+     * 与其它 TYPE_* 的区别：它不是「过程态」，不建岛、不进岛管线，SystemUI 侧
+     * 另用独立 channel / 独立 id（4243）发普通通知，能留存到用户手动清除。
+     * 复用同一条 Provider 通道，避免再开一个 Hook 面（docs/45）。
+     */
+    public static final String TYPE_UNLOCKED_WARN = "UNLOCKED_WARN";
+
     public static final String K_TYPE = "type";
     public static final String K_TS = "ts";
     public static final String K_DEADLINE = "deadline";
